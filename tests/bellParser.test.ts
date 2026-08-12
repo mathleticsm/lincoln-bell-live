@@ -10,6 +10,24 @@ describe('bell parser', () => {
     expect(parsed[0].periods[0].durationMinutes).toBe(99);
   });
 
+
+  it('does not turn the printer-friendly page heading into a bell schedule', () => {
+    const printerLike = `<h1>Lincoln High School — Bell Schedules</h1>
+      <div>
+        <p>Professional Development Tuesdays</p>
+        <table>
+          <tr><td>Period 1/2 (BIC)</td><td>8:30 AM</td><td>9:54 AM</td></tr>
+          <tr><td>Period 3/4</td><td>9:59 AM</td><td>11:14 AM</td></tr>
+          <tr><td>Period 5/6</td><td>11:19 AM</td><td>12:34 PM</td></tr>
+          <tr><td>Lunch</td><td>12:34 PM</td><td>1:04 PM</td></tr>
+          <tr><td>Period 7/8</td><td>1:09 PM</td><td>2:24 PM</td></tr>
+        </table>
+      </div>`;
+    const parsed = parseBellSchedules(printerLike, 'https://www.lincolnhs.org/apps/bell_schedules/');
+    expect(parsed.some(schedule => /Lincoln High School.*Bell Schedules/i.test(schedule.name))).toBe(false);
+    expect(parsed.filter(schedule => schedule.id === 'professional-development-tuesday')).toHaveLength(1);
+  });
+
   it('does not accept backwards or malformed period times', () => {
     const malformed = `<h2>Minimum Day Schedule</h2><table><tr><td>Period 1/2</td><td>10:30 AM</td><td>9:30 AM</td></tr></table>`;
     expect(parseBellSchedules(malformed, 'https://www.lincolnhs.org/apps/bell_schedules/')).toEqual([]);
