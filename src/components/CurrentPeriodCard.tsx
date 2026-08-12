@@ -9,6 +9,7 @@ export function CurrentPeriodCard({ today }: { today: TodayResponse }) {
   const live = computeLiveState(now, today.date, today.periods, today.schoolDay, closedStatus);
   const displayDate = DateTime.fromISO(today.date, { zone: ZONE });
   const hero = live.current?.name || live.label;
+  const specialSchedule = today.schoolDay && today.status === 'unknown' && today.specialEvents.length > 0;
 
   return <section className="hero-card">
     <div className="eyebrow">
@@ -16,11 +17,12 @@ export function CurrentPeriodCard({ today }: { today: TodayResponse }) {
       <span className="badges">
         <b>{today.dayType === 'unknown' ? 'DAY TYPE UNKNOWN' : `${today.dayType.toUpperCase()} DAY`}</b>
         {today.scheduleName && <b>{today.scheduleName.replace(/Regular Bell Schedule|\(|\)/g, '').trim()}</b>}
+        {!today.scheduleName && specialSchedule && <b>SPECIAL SCHEDULE</b>}
       </span>
     </div>
     <div className="hero-main">
       <div>
-        <p className="kicker">{live.status === 'passing' ? 'Between classes' : live.status.replace('-', ' ')}</p>
+        <p className="kicker">{specialSchedule ? 'Special schedule' : live.status === 'passing' ? 'Between classes' : live.status.replace('-', ' ')}</p>
         <h1>{hero}</h1>
         {live.current && <p className="period-time">{live.current.startTime} — {live.current.endTime}</p>}
       </div>
