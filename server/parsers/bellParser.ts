@@ -13,6 +13,12 @@ function slug(name: string) {
   return normalized.replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 80);
 }
 
+function isGenericPageHeading(name: string) {
+  const normalized = name.replace(/\s+/g, ' ').trim();
+  return /^bell schedules?$/i.test(normalized)
+    || (/lincoln high school/i.test(normalized) && /bell schedules?/i.test(normalized));
+}
+
 function kind(name: string): BellPeriod['kind'] {
   if (/lunch/i.test(name)) return 'lunch';
   if (/advisory/i.test(name)) return 'advisory';
@@ -79,12 +85,12 @@ export function parseBellSchedules(html: string, sourceUrl: string, fetchedAt = 
 
     const titleCandidates = $(table).prevAll('h1,h2,h3,h4,h5,strong,b,a').slice(0, 6)
       .map((__, element) => $(element).text().replace(/\s+/g, ' ').trim()).get();
-    let name = titleCandidates.find(title => /schedule|tuesday/i.test(title));
+    let name = titleCandidates.find(title => /schedule|tuesday/i.test(title) && !isGenericPageHeading(title));
     if (!name) {
       const parentText = $(table).parent().text().replace(/\s+/g, ' ').trim();
       name = parentText.match(/(Regular Bell Schedule \([^)]*\)|Minimum Day Schedule|Professional Development Tuesdays?)/i)?.[1];
     }
-    if (!name) return;
+    if (!name || isGenericPageHeading(name)) return;
 
     const previous = $(table).prev();
     const previousText = previous.text().replace(/\s+/g, ' ').trim();
@@ -127,6 +133,10 @@ export function parseBellSchedules(html: string, sourceUrl: string, fetchedAt = 
     }
   }
 
-  const unique = new Map(schedules.map(schedule => [schedule.id, schedule]));
+  const unique = new Map(
+    schedules
+      .filter(schedule => !isGenericPageHeading(schedule.name))
+      .map(schedule => [schedule.id, schedule])
+  );
   return [...unique.values()];
 }
