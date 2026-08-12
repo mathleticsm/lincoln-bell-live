@@ -1,0 +1,21 @@
+services:
+  - type: web
+    name: lincoln-bell-live
+    runtime: node
+    plan: free
+    region: oregon
+    buildCommand: npm install --include=dev && npm run build && npm prune --omit=dev
+    startCommand: npm start
+    healthCheckPath: /health
+    autoDeployTrigger: commit
+    envVars:
+      - key: NODE_VERSION
+        value: 22.16.0
+      - key: NODE_ENV
+        value: production
+      - key: SCHOOL_TIMEZONE
+        value: America/Los_Angeles
+      - key: BELL_CACHE_MINUTES
+        value: "20"
+      - key: EVENT_CACHE_MINUTES
+        value: "10"
