@@ -1,141 +1,213 @@
 # Lincoln Bell Live
 
-Lincoln Bell Live is an independent, mobile-first schedule utility for Lincoln High School in Los Angeles. It retrieves official bell schedules and school calendar data on the server, normalizes them into JSON, determines the school-day schedule, and calculates the current period/countdown locally in the browser using `America/Los_Angeles`.
+Lincoln Bell Live is an independent, mobile-first schedule utility for Lincoln High School in Los Angeles. It turns Lincoln’s official bell schedules and calendar into a glanceable current-period experience without inventing information the school has not published.
 
-## Features
+Production: <https://lincoln-bell-live.onrender.com>
 
-- Live bell schedules parsed from Lincoln's official printer-friendly page
-- ICS-first school calendar with HTML fallback
-- Shared in-memory caching, request de-duplication, and short outage retry backoff
-- Last-known-good runtime data plus clearly labeled bundled bell fallback
-- Odd/Even day detection and user-facing pair transformation
-- Minimum-day, weekday schedule, no-school, weekend, and unknown-special-schedule handling
-- One-second drift-resistant browser countdown and passing-period state
-- Month + agenda calendar, event details, dark/light/system themes, PWA manifest, responsive UI
-- Express security headers, rate limits, bounded date queries, fixed outbound source allowlist
-- `/health`, `/api/status`, `/api/today`, `/api/events`, `/api/bell-schedules`, manual refresh endpoint
+## What it does
+
+- Shows the official Odd/Even day, current period, live countdown, passing period, next period, lunch, dismissal, and schedule progress.
+- Handles weekends, explicit closures, Minimum Days, Professional Development Tuesdays, and unusual calendar-driven schedules.
+- Presents a dedicated `SPECIAL SCHEDULE` state when the calendar confirms a schedule change but matching official bell times are absent.
+- Finds the next school day across weekends, holidays, pupil-free days, closures, and special schedules.
+- Parses Lincoln’s bell schedules dynamically rather than assuming a fixed number of published schedules.
+- Uses the official ICS calendar first, with the official HTML calendar as a server-side fallback.
+- Provides month and agenda calendar views, local search, accessible event details, copy, and individual `.ics` export.
+- Supports dark, light, and system themes, installable PWA behavior, mobile bottom navigation, and offline device-cached data.
+- Reports whether data is live, cached, fallback, unavailable, or loaded from the device cache.
+
+## Architecture
+
+```text
+Browser (React + Vite)
+  ├─ Today / Bells / Calendar / About
+  ├─ second-level countdown isolated to the live hero
+  ├─ local device cache for last-loaded API responses
+  └─ service worker for the static app shell (never /api/*)
+
+Express server
+  ├─ fixed-origin Lincoln fetcher with timeout and size limits
+  ├─ bell HTML parser
+  ├─ ICS-first calendar parser with HTML fallback
+  ├─ shared in-memory caches and request de-duplication
+  ├─ deterministic school-day / next-school-day resolver
+  └─ Vite production asset hosting and SPA fallback
+```
+
+The deployment is one stateless Node service. It requires no database, Redis instance, persistent disk, login, or paid API.
 
 ## Official data sources
 
-- Bell schedules: `https://www.lincolnhs.org/apps/bell_schedules/printerfriendly.jsp`
-- Bell schedule source page: `https://www.lincolnhs.org/apps/bell_schedules/`
-- Calendar ICS: `https://www.lincolnhs.org/apps/events/ical/?id=0`
-- Calendar HTML fallback: `https://www.lincolnhs.org/apps/events/`
+- Bell schedules: <https://www.lincolnhs.org/apps/bell_schedules/printerfriendly.jsp>
+- Bell schedule page: <https://www.lincolnhs.org/apps/bell_schedules/>
+- Calendar ICS: <https://www.lincolnhs.org/apps/events/ical/?id=0>
+- Calendar page / HTML fallback: <https://www.lincolnhs.org/apps/events/>
 
-No Lincoln or LAUSD logo is bundled. The app does not iframe the school site and does not expose an arbitrary proxy endpoint.
+The browser never requests Lincoln directly. Server configuration accepts only HTTPS URLs on `www.lincolnhs.org`; there is no arbitrary proxy route.
 
-## Local development
+## Correctness rules
+
+Every school calculation uses `America/Los_Angeles`, including the school date, weekday, period boundaries, DST, event dates, and next-school-day lookahead.
+
+Calendar priority is conservative:
+
+1. Weekend
+2. Explicit no-school event
+3. Published matching special schedule, such as Minimum Day
+4. Unusual schedule marker
+5. Tuesday schedule
+6. Monday/Wednesday schedule
+7. Thursday/Friday schedule
+
+If an unusual event such as `ADVISORY 1ST: ODD DAY` has no matching schedule on Lincoln’s official bell page, the app retains the known day type and calendar evidence but withholds all exact times.
+
+## Local setup
+
+Requirements: Node.js 22, 23, or 24 and npm.
 
 ```bash
-npm install
+npm ci
 npm run dev
 ```
 
-Vite runs on `http://localhost:5173` and proxies API requests to Express on port 3000.
+Vite runs at `http://localhost:5173` and proxies `/api` and `/health` to Express at `http://localhost:3000`.
 
-## Production build
-
-On the first install from this delivered ZIP (which intentionally has no fabricated lockfile), run:
+## Scripts
 
 ```bash
-npm install
+npm run dev       # Express and Vite watch mode
+npm run lint      # ESLint
+npm run typecheck # browser, server, and test TypeScript projects
+npm test          # Vitest
+npm run build     # dist/client + dist/server
+npm start         # production Express server
+```
+
+Production locally:
+
+```bash
+npm ci
+npm run lint
 npm run typecheck
 npm test
 npm run build
 npm start
 ```
 
-Then open `http://localhost:3000`. The first `npm install` creates `package-lock.json`; commit it, and use `npm ci` on subsequent clean CI/deployment installs if you prefer reproducible lockfile-only installs.
+Open <http://localhost:3000>. Express serves both the API and the Vite production build.
 
 ## Environment variables
 
-All variables have safe defaults. Copy `.env.example` only if you want overrides.
+All variables have safe defaults. See `.env.example`.
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `PORT` | `3000` | Express port; Render supplies this automatically |
-| `BELL_SCHEDULE_URL` | official printer page | Bell source |
-| `BELL_SOURCE_PAGE_URL` | official bell page | Attribution link |
+| `PORT` | `3000` | Express port; Render supplies this |
+| `SCHOOL_TIMEZONE` | `America/Los_Angeles` | Other values are rejected |
+| `BELL_SCHEDULE_URL` | official printer page | Allowlisted bell source |
+| `BELL_SOURCE_PAGE_URL` | official bell page | Public source link |
 | `EVENTS_ICS_URL` | official ICS feed | Preferred calendar source |
-| `EVENTS_PAGE_URL` | official calendar page | HTML fallback / attribution |
-| `SCHOOL_TIMEZONE` | `America/Los_Angeles` | Must remain `America/Los_Angeles`; other values are ignored for safety |
-| `BELL_CACHE_MINUTES` | `20` | Bell TTL |
-| `EVENT_CACHE_MINUTES` | `10` | Calendar TTL |
-| `SOURCE_TIMEOUT_MS` | `10000` | Source fetch timeout |
-| `MANUAL_REFRESH_COOLDOWN_SECONDS` | `60` | Shared refresh cooldown |
+| `EVENTS_PAGE_URL` | official calendar | HTML fallback and source link |
+| `BELL_CACHE_MINUTES` | `20` | Shared bell cache TTL |
+| `EVENT_CACHE_MINUTES` | `10` | Shared calendar cache TTL |
+| `SOURCE_TIMEOUT_MS` | `10000` | Per-attempt upstream timeout |
+| `MANUAL_REFRESH_COOLDOWN_SECONDS` | `60` | Shared manual-refresh cooldown |
 
 ## API
 
-- `GET /health` — cheap process-alive check; never fetches Lincoln
-- `GET /api/bell-schedules` — normalized official schedules + cache/fallback metadata
-- `GET /api/events?start=YYYY-MM-DD&end=YYYY-MM-DD` — normalized events, max 370-day range
-- `GET /api/today` — resolved current school day and transformed periods
-- `GET /api/today?date=YYYY-MM-DD` — inspect another date
-- `GET /api/status` — cache/parser/source diagnostics without secrets
-- `POST /api/refresh` — responsibly force a shared source refresh; rate-limited and cooldown-protected
+| Route | Description |
+|---|---|
+| `GET /health` | Cheap process health; never contacts Lincoln |
+| `GET /api/status` | Sanitized availability, parser, freshness, and cache diagnostics |
+| `GET /api/bell-schedules` | Normalized schedules and source metadata |
+| `GET /api/events?start=YYYY-MM-DD&end=YYYY-MM-DD` | Events overlapping a half-open `[start, end)` range; max 370 days and 2,000 rows |
+| `GET /api/today` | Current LA school date, resolved schedule, periods, source state, and next school day |
+| `GET /api/today?date=YYYY-MM-DD` | Deterministic date inspection |
+| `POST /api/refresh` | Rate-limited shared refresh of both official sources |
 
-## Render deployment (Free web service)
+Unknown `/api/*` routes return JSON 404. Unknown frontend paths render an accessible Not Found screen while direct refreshes of `/bells`, `/calendar`, and `/about` work through the SPA fallback.
 
-The included `render.yaml` defines one Node web service with `plan: free`, an explicit build-dependency install (`npm install --include=dev && npm run build && npm prune --omit=dev`), `npm start`, and `/health` as the health check. The explicit `--include=dev` is important because the Render service sets `NODE_ENV=production` while Vite and tsup are build-time dev dependencies.
+## Cache and source states
 
-Current Render documentation should always be rechecked before deployment. As verified August 11, 2026, Free web services spin down after 15 minutes without inbound traffic, spin back up on the next request, use an ephemeral filesystem, and a workspace receives 750 Free instance hours per calendar month. Render explicitly describes Free instances as suitable for hobby/testing rather than production workloads. This project therefore stores no required state on disk and recovers its live cache after restart/cold start.
+The server keeps one shared in-memory cache per source. Simultaneous requests share a single upstream fetch. Failed refreshes preserve last-known-good data and use a retry backoff so an outage does not cause every visitor to contact Lincoln.
 
-Manual dashboard flow:
+- **Verified live**: the latest source request succeeded.
+- **Cached**: the last successful official data is retained while the current source is unavailable.
+- **Fallback**: bundled bell schedules are being used on a cold-start bell failure and may be stale.
+- **Unavailable**: the calendar is unreachable and no last-known-good server cache exists.
+- **Device cache**: the browser is offline or cannot reach the app server and is showing its last loaded response.
 
-1. Push this repository to GitHub.
-2. In Render, choose **New → Web Service**.
-3. Connect GitHub and select the repository.
-4. Runtime: **Node**.
-5. Instance type: **Free**.
-6. Build command: `npm install --include=dev && npm run build && npm prune --omit=dev`.
-7. Start command: `npm start`.
-8. Health check path: `/health`.
-9. Deploy. Render supplies `PORT`; do not hardcode a production port.
+Render restarts lose in-memory cache by design. The server refetches on demand, uses only the labeled bell fallback if necessary, and never fabricates calendar events.
 
-You can also create a Blueprint from the included `render.yaml`.
+## PWA and offline behavior
 
-## UptimeRobot Free monitoring
+The web manifest includes 192 px and 512 px icons plus Today, Calendar, and Bell Schedules shortcuts. The Install App control appears only after a browser exposes its install prompt and hides after installation or dismissal.
 
-As verified August 11, 2026, UptimeRobot's Free plan lists 50 monitors and a 5-minute monitoring interval. Create an HTTP(s) monitor with:
+The service worker:
 
-- Friendly name: `Lincoln Bell Live`
-- URL: `https://YOUR-SERVICE.onrender.com/health`
-- Interval: **5 minutes** (fastest currently listed for Free)
-- Alerts: attach the email/mobile integration(s) available on your account
+- discovers and caches Vite’s hashed JS/CSS plus the core shell;
+- uses network-first navigation and static requests;
+- never intercepts or permanently caches `/api/*` or `/health`;
+- falls back to the cached app shell offline.
 
-Health checks are legitimate availability monitoring, but they are still inbound traffic. On Render Free, that traffic can affect whether the service becomes idle, and a running Free instance consumes the workspace's monthly Free instance hours. UptimeRobot does not bypass Render limits or guarantee permanent 24/7 free hosting.
+Loaded Today, Bells, and Calendar responses are also stored in browser storage. Offline copies are explicitly labeled and never presented as live.
 
-## GitHub
+## Security and privacy
 
-```bash
-git init
-git add .
-git commit -m "Build Lincoln Bell Live"
-git branch -M main
-git remote add origin https://github.com/YOUR-USER/lincoln-bell-live.git
-git push -u origin main
-```
+- Helmet with a same-origin production CSP
+- API rate limiting and bounded JSON input
+- strict query validation and safe production errors
+- fixed official hostname, HTTPS-only outbound fetching, redirects blocked
+- 10-second default timeout and 5 MB source-response cap
+- no `dangerouslySetInnerHTML`, source script execution, arbitrary fetch route, or exposed stack trace
+- no accounts, credentials, student IDs, location tracking, behavioral profiling, or analytics
 
-A permissive license such as MIT is a reasonable choice for this independent utility if that matches your intentions; no license file is imposed automatically because license selection is a project-owner decision.
+## Tests and CI
 
-## Troubleshooting
+The test suite covers the realistic Lincoln HTML/ICS fixtures, dynamic bell discovery, invalid and duplicate schedules, Odd/Even transformation, closures and special schedules, countdown boundaries, next-school-day lookahead, recurrence and calendar boundaries, event export, LA/DST behavior, cache failures, and API validation.
 
-- **Live bell source down:** `/api/bell-schedules` serves last-known-good cache, then the bundled fallback only if no successful runtime fetch exists. The UI labels fallback data as potentially stale.
-- **Calendar feed down:** the service tries the official HTML calendar. If both fail, server last-known-good data is served when available. With no server cache, `/api/events` returns 503 so the browser can preserve its own last-known-good month; `/api/today` withholds an unverified weekday schedule rather than guessing.
-- **Special schedule without published bell times:** exact times are withheld rather than guessed.
-- **Render cold start:** the first request can be delayed while the Free service spins up; source caches repopulate after process start.
-- **Lincoln outage:** failed refreshes use a short in-memory retry backoff, preventing ordinary visitor traffic from repeatedly retrying the official site while it is down.
-- **Offline PWA:** static shell assets are pre-cached on service-worker installation, but live API responses are intentionally never stored by the service worker; browser last-known-good UI caches provide the offline schedule/calendar fallback.
-- **Wrong time:** verify `SCHOOL_TIMEZONE=America/Los_Angeles`; server machine timezone is intentionally irrelevant.
-
-## Verification commands
+`.github/workflows/ci.yml` runs on every push and pull request using Node 22:
 
 ```bash
+npm ci
 npm run lint
 npm run typecheck
 npm test
 npm run build
-NODE_ENV=production npm start
 ```
 
-Then check `/health`, `/api/status`, `/api/bell-schedules`, `/api/events`, and `/api/today`.
+## Render deployment
+
+`render.yaml` defines the single Free web service, Node 22, `npm ci --include=dev`, production build, dependency pruning, `npm start`, and `/health` health check. Express listens on `process.env.PORT` and `0.0.0.0`.
+
+To deploy:
+
+1. Commit all source changes, `.github/workflows/ci.yml`, and `package-lock.json`.
+2. Push the branch connected to the Render service.
+3. Let Render build from `render.yaml`.
+4. Verify `/health`, `/api/status`, `/api/bell-schedules`, `/api/events`, and `/api/today` on the production hostname.
+
+No filesystem data generated at runtime needs to be preserved.
+
+## UptimeRobot
+
+Create an HTTPS monitor for:
+
+```text
+https://lincoln-bell-live.onrender.com/health
+```
+
+Expect HTTP 200 and optionally alert when the JSON body no longer contains `"ok":true`. Monitor only `/health`; it is intentionally cheap and never triggers a Lincoln source request. Choose the interval according to the Render plan and desired cold-start behavior.
+
+## Troubleshooting
+
+- **Bell endpoint says fallback:** open `/api/status`, check the last attempt, then compare the official printer page. A parser regression should be reproduced by updating the minimal fixture, not bypassed with hardcoded data.
+- **Calendar unavailable:** confirm the ICS URL first. The server automatically attempts the official HTML page if ICS parsing fails.
+- **Manual refresh returns 429:** wait for the shared cooldown. Ordinary visitors continue using the shared cache.
+- **A special day has no times:** this is intentional unless Lincoln publishes a matching schedule. Check the official calendar and bell page links shown in the app.
+- **Offline page has no schedule:** load the route successfully once while online so the shell and device cache exist.
+- **Theme flash:** ensure `/theme-init.js` remains in the document head before the React entry script.
+
+## Disclaimer
+
+Schedule and event information is sourced from the official Lincoln High School website. Lincoln Bell Live is an independent utility and is not an official Lincoln High School or LAUSD website.

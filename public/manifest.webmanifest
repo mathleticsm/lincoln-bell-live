@@ -3,6 +3,7 @@
   "short_name":"Bell Live",
   "description":"Live Lincoln High School bell schedule and calendar.",
   "start_url":"/",
+  "scope":"/",
   "display":"standalone",
   "background_color":"#f5f7fb",
   "theme_color":"#3157d5",
@@ -10,5 +11,10 @@
     {"src":"/icons/icon-192.png","sizes":"192x192","type":"image/png","purpose":"any maskable"},
     {"src":"/icons/icon-512.png","sizes":"512x512","type":"image/png","purpose":"any maskable"},
     {"src":"/icons/icon.svg","sizes":"any","type":"image/svg+xml","purpose":"any"}
+  ],
+  "shortcuts":[
+    {"name":"Today","short_name":"Today","url":"/","icons":[{"src":"/icons/icon-192.png","sizes":"192x192"}]},
+    {"name":"Calendar","short_name":"Calendar","url":"/calendar","icons":[{"src":"/icons/icon-192.png","sizes":"192x192"}]},
+    {"name":"Bell Schedules","short_name":"Bells","url":"/bells","icons":[{"src":"/icons/icon-192.png","sizes":"192x192"}]}
   ]
 }

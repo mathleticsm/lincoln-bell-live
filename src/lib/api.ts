@@ -1,14 +1,18 @@
-import type { ApiEnvelope, BellSchedule, SchoolEvent, TodayResponse } from '../types';
+import type { ApiEnvelope, BellSchedule, RefreshResponse, SchoolEvent, StatusResponse, TodayResponse } from '../types';
 
-async function request<T>(url:string, init?:RequestInit):Promise<T>{
-  const res=await fetch(url,init);
-  if(!res.ok) throw new Error((await res.json().catch(()=>({}))).error || `Request failed (${res.status})`);
-  return res.json();
+async function request<T>(url: string, init?: RequestInit): Promise<T> {
+  const response = await fetch(url, init);
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({})) as { error?: string };
+    throw new Error(body.error || `Request failed (${response.status})`);
+  }
+  return response.json() as Promise<T>;
 }
-export const api={
-  today:(date?:string)=>request<ApiEnvelope<TodayResponse>>(`/api/today${date?`?date=${date}`:''}`),
-  schedules:()=>request<ApiEnvelope<BellSchedule[]>>('/api/bell-schedules'),
-  events:(start:string,end:string)=>request<ApiEnvelope<SchoolEvent[]>>(`/api/events?start=${start}&end=${end}`),
-  status:()=>request<Record<string,unknown>>('/api/status'),
-  refresh:()=>request<{ok:boolean;bell:{sourceAvailable:boolean;stale:boolean};calendar:{sourceAvailable:boolean;stale:boolean}}>('/api/refresh',{method:'POST'})
+
+export const api = {
+  today: (date?: string) => request<ApiEnvelope<TodayResponse>>(`/api/today${date ? `?date=${encodeURIComponent(date)}` : ''}`),
+  schedules: () => request<ApiEnvelope<BellSchedule[]>>('/api/bell-schedules'),
+  events: (start: string, end: string) => request<ApiEnvelope<SchoolEvent[]>>(`/api/events?start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`),
+  status: () => request<StatusResponse>('/api/status'),
+  refresh: () => request<RefreshResponse>('/api/refresh', { method: 'POST' })
 };

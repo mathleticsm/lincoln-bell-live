@@ -1,4 +1,4 @@
-const CACHE = 'lincoln-bell-live-static-v4';
+const CACHE = 'lincoln-bell-live-static-v5';
 const CORE = ['/manifest.webmanifest', '/icons/icon.svg', '/icons/icon-192.png', '/icons/icon-512.png', '/theme-init.js'];
 
 async function cacheIfAvailable(cache, url) {

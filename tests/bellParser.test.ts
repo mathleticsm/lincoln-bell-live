@@ -1,9 +1,19 @@
 import { describe, it, expect } from 'vitest';
+import { readFileSync } from 'node:fs';
 import { parseBellSchedules } from '../server/parsers/bellParser.js';
 
 const html = `<h2>Regular Bell Schedule (Monday/Wednesday)</h2><table><tr><th>Description / Period</th><th>Start Time</th><th>End Time</th></tr><tr><td>Period 1/2 (BIC)</td><td>8:30 AM</td><td>10:09 AM</td></tr></table><h2>Regular Bell Schedule (Thursday/Friday)</h2><table><tr><td>Period 1/2</td><td>8:30 AM</td><td>10:01 AM</td></tr></table><h2>Minimum Day Schedule</h2><table><tr><td>Period 1/2</td><td>8:30 AM</td><td>9:38 AM</td></tr></table><h2>Professional Development Tuesdays</h2><table><tr><td>Period 1/2</td><td>8:30 AM</td><td>9:54 AM</td></tr></table>`;
 
 describe('bell parser', () => {
+  it('parses exactly the current official schedule sections from a realistic fixture', () => {
+    const fixture = readFileSync(new URL('./fixtures/lincoln-bell-schedules.html', import.meta.url), 'utf8');
+    const parsed = parseBellSchedules(fixture, 'https://www.lincolnhs.org/apps/bell_schedules/');
+    expect(parsed.map(schedule => schedule.id)).toEqual([
+      'regular-mon-wed', 'regular-thu-fri', 'minimum-day', 'professional-development-tuesday'
+    ]);
+    expect(parsed.every(schedule => schedule.periods.length >= 5)).toBe(true);
+  });
+
   it('finds current schedule families', () => {
     const parsed = parseBellSchedules(html, 'https://www.lincolnhs.org/apps/bell_schedules/');
     expect(parsed.map(schedule => schedule.id)).toEqual(expect.arrayContaining(['regular-mon-wed', 'regular-thu-fri', 'minimum-day', 'professional-development-tuesday']));
@@ -39,5 +49,15 @@ describe('bell parser', () => {
       <tr><td>Period 3/4</td><td>9:30 AM</td><td>10:41 AM</td></tr>
     </table>`;
     expect(parseBellSchedules(malformed, 'https://www.lincolnhs.org/apps/bell_schedules/')).toEqual([]);
+  });
+
+  it('dynamically discovers a newly published schedule family', () => {
+    const future = `<section><h2>Testing Schedule</h2><table><tr><td>Period 1/2</td><td>8:30 AM</td><td>9:30 AM</td></tr><tr><td>Period 3/4</td><td>9:35 AM</td><td>10:35 AM</td></tr></table></section>`;
+    expect(parseBellSchedules(future, 'https://www.lincolnhs.org/apps/bell_schedules/')).toMatchObject([{ id: 'testing-schedule', name: 'Testing Schedule' }]);
+  });
+
+  it('deduplicates repeated wrapper copies of a schedule', () => {
+    const duplicate = `<h2>Assembly Schedule</h2><table><tr><td>Period 1/2</td><td>8:30 AM</td><td>9:30 AM</td></tr></table><h2>Assembly Schedule</h2><table><tr><td>Period 1/2</td><td>8:30 AM</td><td>9:30 AM</td></tr></table>`;
+    expect(parseBellSchedules(duplicate, 'https://www.lincolnhs.org/apps/bell_schedules/')).toHaveLength(1);
   });
 });

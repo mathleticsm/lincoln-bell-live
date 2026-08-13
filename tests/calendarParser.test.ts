@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { DateTime } from 'luxon';
+import { readFileSync } from 'node:fs';
 import { parseEventsHtml, parseIcsEvents } from '../server/parsers/calendarParser.js';
 
 const ics = `BEGIN:VCALENDAR\nVERSION:2.0\nBEGIN:VEVENT\nUID:odd-1\nDTSTART;VALUE=DATE:20260817\nDTEND;VALUE=DATE:20260818\nSUMMARY:EVEN DAY\nEND:VEVENT\nBEGIN:VEVENT\nUID:timed-1\nDTSTART;TZID=America/Los_Angeles:20260821T190000\nDTEND;TZID=America/Los_Angeles:20260821T210000\nSUMMARY:Football Game\nLOCATION:Stadium\nEND:VEVENT\nEND:VCALENDAR`;
@@ -20,6 +21,12 @@ END:VCALENDAR`;
 const recurringIcs = `BEGIN:VCALENDAR\nVERSION:2.0\nBEGIN:VEVENT\nUID:recurring-1\nDTSTART;VALUE=DATE:20260817\nDTEND;VALUE=DATE:20260818\nRRULE:FREQ=DAILY;COUNT=3\nEXDATE;VALUE=DATE:20260818\nSUMMARY:Recurring Test\nEND:VEVENT\nEND:VCALENDAR`;
 
 describe('calendar parser', () => {
+  it('parses a minimal fixture matching Lincoln’s current ICS structure', () => {
+    const fixture = readFileSync(new URL('./fixtures/lincoln-events.ics', import.meta.url), 'utf8');
+    const events = parseIcsEvents(fixture, 'https://www.lincolnhs.org/apps/events/');
+    expect(events.map(event => event.title)).toEqual(['ADVISORY 1ST: ODD DAY', 'Fall 2026: 1st day of school', 'Football vs. University']);
+  });
+
   it('normalizes all-day and timed ICS events', () => {
     const events = parseIcsEvents(ics, 'https://www.lincolnhs.org/apps/events/');
     expect(events.find(event => event.title === 'EVEN DAY')).toMatchObject({ allDay: true, start: '2026-08-17' });
@@ -98,6 +105,18 @@ SUMMARY:Rapid event
 END:VEVENT
 END:VCALENDAR`;
     expect(() => parseIcsEvents(ics, 'https://www.lincolnhs.org/apps/events/', DateTime.fromISO('2026-08-11', { zone: 'America/Los_Angeles' }))).toThrow(/high-frequency recurrence/i);
+  });
+
+  it('keeps an all-day multi-day event DTEND exclusive', () => {
+    const multi = `BEGIN:VCALENDAR\nVERSION:2.0\nBEGIN:VEVENT\nUID:break\nDTSTART;VALUE=DATE:20260812\nDTEND;VALUE=DATE:20260815\nSUMMARY:School Break\nEND:VEVENT\nEND:VCALENDAR`;
+    expect(parseIcsEvents(multi, 'https://www.lincolnhs.org/apps/events/')[0]).toMatchObject({ start: '2026-08-12', end: '2026-08-15', allDay: true });
+  });
+
+  it('preserves a timed event ending exactly at midnight', () => {
+    const midnight = `BEGIN:VCALENDAR\nVERSION:2.0\nBEGIN:VEVENT\nUID:midnight\nDTSTART;TZID=America/Los_Angeles:20260812T200000\nDTEND;TZID=America/Los_Angeles:20260813T000000\nSUMMARY:Evening Event\nEND:VEVENT\nEND:VCALENDAR`;
+    const event = parseIcsEvents(midnight, 'https://www.lincolnhs.org/apps/events/')[0];
+    expect(event.start).toContain('2026-08-12T20:00:00');
+    expect(event.end).toContain('2026-08-13T00:00:00');
   });
 
 });

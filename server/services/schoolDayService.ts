@@ -1,5 +1,5 @@
 import { DateTime } from 'luxon';
-import type { BellPeriod, BellSchedule, DayType, SchoolEvent, TodayResponse } from '../../src/types/index.js';
+import type { BellPeriod, BellSchedule, DayType, NextSchoolDay, SchoolDayPreview, SchoolEvent, SourceMode, TodayResponse } from '../../src/types/index.js';
 import { config } from '../config.js';
 
 export function normalizeTitle(title: string) {
@@ -19,14 +19,14 @@ export function transformPeriodName(rawName: string, dayType: DayType) {
   return rawName.replace(/\bPeriod\s+(\d)\/(\d)\b/i, (_, odd, even) => `Period ${dayType === 'odd' ? odd : even}`);
 }
 
-function eventTouchesDate(event: SchoolEvent, date: DateTime) {
+export function eventTouchesDate(event: SchoolEvent, date: DateTime) {
   const target = date.toISODate();
   if (!target) return false;
   if (event.allDay) {
     const start = event.start.slice(0, 10);
     const end = event.end?.slice(0, 10);
     // RFC 5545 all-day DTEND is exclusive.
-    return start <= target && (!end || target < end);
+    return end ? start <= target && target < end : start === target;
   }
   const start = DateTime.fromISO(event.start, { zone: config.timezone });
   const end = event.end ? DateTime.fromISO(event.end, { zone: config.timezone }) : undefined;
@@ -75,7 +75,7 @@ function findUnknownSpecial(events: SchoolEvent[]) {
     const n = normalizeTitle(e.title);
     if (/\bMINIMUM DAY\b/.test(n)) return false;
     if (/\bADVISORY 1ST\b/.test(n) && /\b(ODD|EVEN) DAY\b/.test(n)) return true;
-    return /\b(SPECIAL SCHEDULE|BELL SCHEDULE|LATE START|EARLY RELEASE|EARLY DISMISSAL|FINALS? SCHEDULE)\b/.test(n);
+    return /\b(SPECIAL SCHEDULE|BELL SCHEDULE|LATE START|EARLY RELEASE|EARLY DISMISSAL|FINALS? SCHEDULE|ASSEMBLY SCHEDULE|TESTING SCHEDULE)\b/.test(n);
   });
 }
 
@@ -85,7 +85,7 @@ function isSpecialCalendarEvent(event: SchoolEvent) {
     || /(?:^|\s)(?:ODD|EVEN) DAY(?:$|\s)/.test(n)
     || /\bMINIMUM DAY\b/.test(n)
     || (/\bADVISORY 1ST\b/.test(n) && /\b(?:ODD|EVEN) DAY\b/.test(n))
-    || /\b(SPECIAL SCHEDULE|BELL SCHEDULE|LATE START|EARLY RELEASE|EARLY DISMISSAL|FINALS? SCHEDULE)\b/.test(n);
+    || /\b(SPECIAL SCHEDULE|BELL SCHEDULE|LATE START|EARLY RELEASE|EARLY DISMISSAL|FINALS? SCHEDULE|ASSEMBLY SCHEDULE|TESTING SCHEDULE)\b/.test(n);
 }
 
 function findPublishedSpecialSchedule(schedules: BellSchedule[], event: SchoolEvent) {
@@ -133,7 +133,7 @@ export function resolveSchoolDay(
   date: DateTime,
   events: SchoolEvent[],
   schedules: BellSchedule[],
-  sourceState = { bell: 'live', calendar: 'live' }
+  sourceState: { bell: SourceMode; calendar: SourceMode } = { bell: 'live', calendar: 'live' }
 ): TodayResponse {
   const local = date.setZone(config.timezone);
   const todaysEvents = events.filter(e => eventTouchesDate(e, local));
@@ -196,4 +196,40 @@ export function resolveSchoolDay(
     periods,
     sourceUpdatedAt: schedule?.fetchedAt
   };
+}
+
+function preview(result: TodayResponse): SchoolDayPreview {
+  return {
+    date: result.date,
+    schoolDay: result.schoolDay,
+    dayType: result.dayType,
+    status: result.status,
+    reason: result.reason,
+    scheduleName: result.scheduleName,
+    firstBell: result.periods[0]?.startTime,
+    exactTimesVerified: Boolean(result.schedule && result.periods.length),
+    specialSchedule: result.schoolDay && !result.schedule && result.specialEvents.length > 0
+  };
+}
+
+export function resolveNextSchoolDay(
+  date: DateTime,
+  events: SchoolEvent[],
+  schedules: BellSchedule[],
+  sourceState: { bell: SourceMode; calendar: SourceMode } = { bell: 'live', calendar: 'live' },
+  lookaheadDays = 32
+): NextSchoolDay {
+  const local = date.setZone(config.timezone).startOf('day');
+  const tomorrowResult = resolveSchoolDay(local.plus({ days: 1 }).set({ hour: 12 }), events, schedules, sourceState);
+  let nextClasses: SchoolDayPreview | undefined;
+
+  for (let offset = 1; offset <= lookaheadDays; offset += 1) {
+    const result = resolveSchoolDay(local.plus({ days: offset }).set({ hour: 12 }), events, schedules, sourceState);
+    if (result.schoolDay) {
+      nextClasses = preview(result);
+      break;
+    }
+  }
+
+  return { tomorrow: preview(tomorrowResult), nextClasses };
 }

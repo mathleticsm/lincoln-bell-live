@@ -1,105 +1,129 @@
-# Verification record
+# Lincoln Bell Live Verification
 
-A full QA/fix pass was completed on 2026-08-11 in `America/Los_Angeles`.
+Verified locally on August 12, 2026 in `America/Los_Angeles`.
 
-## Verification status
+## Environment
 
-| Check | Status | Notes |
-|---|---|---|
-| Repository/source audit | PASS | All application, server, PWA, test, and deployment files re-inspected. |
-| TypeScript/TSX syntax | PASS | 35 `.ts`/`.tsx` files transpiled with the globally available TypeScript compiler. |
-| Local imports | PASS | All relative imports resolve to repository files. |
-| JSON / Render YAML | PASS | Configuration files parse successfully. |
-| Public JavaScript syntax | PASS | Service worker, theme bootstrap, and ESLint config pass `node --check`. |
-| CSS parse | PASS | `src/styles/main.css` parses successfully with PostCSS. |
-| Unsafe / unfinished source scan | PASS | No `TODO`/`FIXME`/`HACK`, `dangerouslySetInnerHTML`, `eval`, or `javascript:` URL was found in application source. |
-| PWA icon sizes | PASS | 192×192 and 512×512 PNG assets verified. |
-| Current Lincoln bell source | VERIFIED | Four currently published schedule families and their times still match parser validation/seed data. |
-| Current Lincoln calendar patterns | VERIFIED | Current calendar includes Pupil Free Day, ODD/EVEN markers, and Advisory-first markers handled by the resolver. |
-| Dependency-backed lint/typecheck/tests/build | BLOCKED HERE | The sandbox cannot resolve `registry.npmjs.org`; dependency installation times out. |
-| Production server/API smoke test | BLOCKED HERE | Requires the dependencies/build that cannot be installed in this sandbox. |
+- Node.js: `v24.18.0`
+- npm: `12.0.1`
+- Production command: `node dist/server/index.js`
+- Production bind: `0.0.0.0:3000`
+- Browser: Codex in-app Chromium browser
 
-A failed `npm install --include=dev` was retried during this QA pass and timed out at the registry/network layer. The repository therefore does **not** claim that Vitest, Vite, tsup, ESLint, or the dependency-aware TypeScript checker executed successfully here.
+## Clean install and security
 
-## Correctness and reliability fixes
+| Check | Result |
+|---|---|
+| `npm ci` | PASS |
+| `npm audit --audit-level=low` | PASS — 0 vulnerabilities |
+| Lockfile generated and reproducible | PASS |
 
-- Date-scoped browser caching prevents yesterday's `/api/today` response from surviving Los Angeles midnight as today's schedule.
-- The calendar's today highlight also rolls over at Los Angeles midnight without requiring navigation.
-- Countdown math recalculates from the real timestamp and uses ceiling semantics, preventing one-second-early displays and timer drift.
-- All calendar overlap checks now use half-open intervals, so events ending exactly at midnight do not leak into the next day.
-- Multi-day and overnight event labels show `Until …` / `Ongoing` correctly on continuation days, and the event dialog shows accurate end dates/times.
-- All-day events with no explicit end are still labeled `All day`.
-- Month-grid Sunday math is corrected, calendar request races are ignored after navigation, and old-month events are cleared before a new load.
-- `/api/events` defaults to the requested current month instead of accidentally spanning almost two months.
-- `/api/events` now enforces a true maximum of 370 calendar days.
-- `/api/events` returns 503 when both Lincoln calendar sources are unavailable and no server last-known-good exists, allowing the browser to preserve its own last-known-good rather than overwrite it with a false empty calendar.
-- Ordinary events are separated from `/api/today.specialEvents`; only schedule/day-affecting calendar entries are returned there while `allEvents` keeps the complete day agenda.
-- Unknown frontend routes redirect to Today instead of rendering an empty content area.
+The compatible `esbuild` override removes the development-server advisory inherited through the build toolchain. The full command suite passes with the override.
 
-## School-day resolver fixes
+## Automated QA
 
-- ODD and EVEN title matching is normalized for punctuation/case and avoids substring accidents.
-- Conflicting official ODD and EVEN markers return `unknown` with a warning rather than guessing.
-- Pair labels transform only when day type is known (`1/2 → 1 or 2`, etc.).
-- Weekend state remains distinct from calendar-derived no-school state.
-- Pupil Free Day, explicit No School/School Closed, recognized holidays, and date-suffixed official break/recess labels are treated conservatively as closures.
-- Event names such as `Holiday Concert` and `Winter Break Concert` are not misclassified as closures.
-- Minimum Day overrides the weekday schedule.
-- Advisory-first and other special-schedule markers use a matching published Lincoln schedule only if one exists; otherwise exact times are withheld with a warning.
-- Calendar cold-start failure no longer allows an ordinary weekday schedule to be presented as verified.
+| Command | Result |
+|---|---|
+| `npm run lint` | PASS — no warnings or errors |
+| `npm run typecheck` | PASS |
+| `npm test` | PASS — 9 files, 84 tests |
+| `npm run build` | PASS |
 
-## Parser and source-safety fixes
+Test coverage includes:
 
-- Bell schedules are rejected if periods overlap, run backward, contain invalid times, or produce non-positive durations.
-- The live bell service accepts any non-empty future published schedule set instead of requiring the current four families.
-- Known current schedules remain available only as a clearly marked last-resort seed fallback.
-- `node-ical` parameterized text properties (`SUMMARY;LANGUAGE=…`, description, location) are normalized correctly.
-- Recurrence overrides read override description/location from the expanded instance's VEVENT object.
-- Recurrence expansion respects EXDATE/overrides and has bounded horizons/maximum output.
-- Extremely high-frequency recurrence rules are rejected so the service can fall back to the official HTML calendar instead of expanding untrusted minute/hour recurrence floods.
-- HTML fallback handles overnight times and produces distinct IDs for same-title events at different times.
-- Outbound configuration is clamped to HTTPS `www.lincolnhs.org` URLs only.
-- Source fetches reject redirects, enforce a 5 MB response cap, validate HTML/calendar response shape, use timeouts/retry, and never expose an arbitrary proxy.
+- realistic current Lincoln bell HTML and ICS fixtures;
+- dynamic schedule discovery and wrapper-heading exclusion;
+- invalid time, backwards-row, overlap, and duplicate-schedule rejection;
+- all Odd/Even period-pair transformations;
+- weekday selection, weekends, closures, Minimum Day, and unpublished special schedules;
+- next-school-day lookahead across weekends, holidays, and pupil-free days;
+- countdown start/end/passing/lunch/advisory/nutrition boundaries;
+- all-day exclusive `DTEND`, multi-day, overnight, and midnight event coverage;
+- recurrence, `EXDATE`, parameterized text, duplicate handling, and HTML fallback;
+- individual calendar export escaping and UTC conversion;
+- LA date selection and spring/fall DST offsets;
+- cache last-known-good behavior and failure backoff;
+- `/health`, JSON API 404s, and invalid event-range rejection.
 
-## Cache, API, security, and deployment fixes
+## Production server and API smoke test
 
-- Shared in-memory caches deduplicate simultaneous refreshes.
-- Failed refreshes preserve last-known-good data and mark it stale/source-unavailable.
-- A short failure backoff prevents sequential visitor traffic from repeatedly hammering Lincoln during an outage.
-- Combined freshness uses the **older** successful bell/calendar timestamp so the UI never overstates recency.
-- Manual Refresh reports actual source availability rather than claiming success when only cached/fallback data remains.
-- `/api/*` unknown routes return JSON 404 rather than the React shell.
-- A sanitized final Express error handler prevents raw errors from reaching clients.
-- CSP/Helmet, API rate limits, bounded JSON input, and fixed-origin source fetching remain enabled.
-- Only hashed Vite `/assets/` receive immutable one-year HTTP caching; the shell/service worker/theme bootstrap are revalidated.
-- The service worker never caches `/api/*` or `/health` and now discovers/pre-caches the built Vite JS/CSS during installation, so the app shell can boot offline after the first successful visit.
-- Service-worker ESLint globals are scoped to the service-worker environment rather than ordinary browser globals.
-- Render's build command explicitly installs dev dependencies before Vite/tsup even though the service uses `NODE_ENV=production`.
-- Browser, server, and test TypeScript configurations are split so their module-resolution requirements do not conflict.
-- Dependency floors were raised to current patched lines reviewed during this QA pass, including Vite, the Vite React plugin compatible with Vite 7, Express, Helmet, express-rate-limit, and React Router v7.
+The production Vite build was served by Express after `npm start` semantics, not by the Vite dev server.
 
-## Required full verification on a normal network
+| Route | Status | Content type | Result |
+|---|---:|---|---|
+| `/health` | 200 | `application/json` | PASS |
+| `/api/status` | 200 | `application/json` | PASS |
+| `/api/bell-schedules` | 200 | `application/json` | PASS — live, 4 official schedules |
+| `/api/events` | 200 | `application/json` | PASS — live ICS, 22 current-range events |
+| `/api/today` | 200 | `application/json` | PASS — Odd special schedule, zero invented periods |
+| unknown `/api/*` | 404 | `application/json` | PASS |
+| `/` | 200 | `text/html` | PASS |
+| `/bells` | 200 | `text/html` | PASS |
+| `/calendar` | 200 | `text/html` | PASS |
+| `/about` | 200 | `text/html` | PASS |
+| unknown frontend path | 200 shell + React 404 | `text/html` | PASS |
 
-The delivered ZIP intentionally has no fabricated `package-lock.json`. On a machine that can reach npm, run:
+Live diagnostics after source loading reported:
 
-```bash
-npm install
-npm run lint
-npm run typecheck
-npm test
-npm run build
-NODE_ENV=production npm start
-```
+- Bell schedules: `live`, parser `Official HTML`
+- Calendar: `live`, parser `Official ICS`
+- Current official special event: `ADVISORY 1ST: ODD DAY`
+- Current exact periods: `0` because Lincoln has not published a matching schedule
 
-Then verify:
+## Browser QA
 
-```text
-http://localhost:3000/
-http://localhost:3000/health
-http://localhost:3000/api/status
-http://localhost:3000/api/bell-schedules
-http://localhost:3000/api/events
-http://localhost:3000/api/today
-```
+### Responsive layout
 
-Commit the real `package-lock.json` generated by the first successful `npm install`; after that, clean CI/deployments can use `npm ci` if desired.
+Tested Today at widths `360`, `375`, `390`, `412`, and `430` px. Every width passed without horizontal overflow. At phone widths:
+
+- top navigation is hidden;
+- fixed icon-and-label bottom navigation is visible;
+- safe-area bottom padding is applied;
+- the special-day hero remains readable;
+- the month calendar uses 44 px date buttons and event dots;
+- selected-day event titles remain full-size below the grid.
+
+Desktop was verified at 1280 px with centered content, top navigation, hidden bottom navigation, and no horizontal overflow.
+
+### Routes and controls
+
+- Today, Bells, Calendar, and About navigation: PASS
+- Direct browser refresh on `/bells`, `/calendar`, and `/about`: PASS
+- React Not Found screen and return-to-Today link: PASS
+- Data-source drawer with live timestamps, parsers, and official links: PASS
+- Special-schedule explanation disclosure: PASS
+- Event dialog focusable/closable with Copy details: PASS
+- Clipboard success status: PASS
+- Bell dismissal comparison: PASS
+- Calendar month/agenda toggle: PASS
+- Calendar local search: PASS
+- Manual source refresh: PASS — `Live sources refreshed.` only after both sources returned live
+- Browser console: PASS — no warnings or errors
+
+### Theme and offline behavior
+
+- Light: PASS
+- Dark: PASS
+- System: PASS; current system preference resolved to dark
+- Static theme bootstrap before React: PASS
+- Offline shell: PASS after stopping only the local production server
+- Offline Today device cache: PASS with `Offline · device cache` and explicit warning
+- Live recovery after server restart: PASS
+
+## Bugs found during this pass
+
+1. Server TypeScript widened the live/cached `dataMode` string and failed strict typecheck.
+2. The live bell parser did not read Lincoln’s current table `<caption>` titles and fell back despite a reachable official page.
+3. Prose such as “All SLCs share the same bell schedule” could be selected as a schedule name.
+4. An all-day event without `DTEND` was treated as continuing forever, breaking next-school-day lookup.
+5. The event API used inclusive end-date semantics instead of a clear half-open range.
+6. Source diagnostics exposed internal cache shape rather than a sanitized public status model.
+7. The existing frontend contained partial UX and lacked working search, export, copy, next-day context, mobile bottom navigation, source details, and install gating.
+
+All listed bugs are corrected and covered where practical by regression tests.
+
+## Remaining manual/environment-specific checks
+
+- The browser install prompt appears only on a supported installable browser; the test browser did not emit `beforeinstallprompt`, so no fake Install App button was shown.
+- Browser notification reminders were intentionally not added because they were optional and reliable background delivery was outside this stateless deployment.
+- A production Lighthouse run and physical iOS Safari/Android Chrome device pass remain useful after deployment, though responsive Chromium and offline PWA behavior passed locally.

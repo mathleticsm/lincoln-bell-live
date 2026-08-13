@@ -5,9 +5,10 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { DateTime } from 'luxon';
 import { config } from './config.js';
-import { getBellSchedules, bellStatus } from './services/bellScheduleService.js';
-import { getEvents, calendarStatus } from './services/calendarService.js';
-import { resolveSchoolDay } from './services/schoolDayService.js';
+import { getBellSchedules, bellSourceMode, bellStatus } from './services/bellScheduleService.js';
+import { getEvents, calendarSourceMode, calendarStatus } from './services/calendarService.js';
+import { resolveNextSchoolDay, resolveSchoolDay } from './services/schoolDayService.js';
+import type { SourceDiagnostics, SourceMode } from '../src/types/index.js';
 
 const app = express();
 app.disable('x-powered-by');
@@ -44,6 +45,31 @@ function parseDateOnly(value: unknown, fallback: DateTime) {
   return DateTime.fromISO(value, { zone: config.timezone });
 }
 
+function sourceLabel(state: Exclude<SourceMode, 'browser-cache'>) {
+  if (state === 'live') return 'Verified live';
+  if (state === 'cached') return 'Cached last-known-good data';
+  if (state === 'fallback') return 'Fallback schedule; may be stale';
+  return 'Unavailable';
+}
+
+function diagnostics(
+  state: Exclude<SourceMode, 'browser-cache'>,
+  parserMode: string,
+  sourceUrl: string,
+  snapshot: ReturnType<typeof bellStatus>
+): SourceDiagnostics {
+  return {
+    state,
+    label: sourceLabel(state),
+    parserMode,
+    sourceUrl,
+    fetchedAt: snapshot.fetchedAt,
+    lastAttemptAt: snapshot.lastAttemptAt,
+    cacheAgeSeconds: snapshot.cacheAgeSeconds,
+    hasData: snapshot.hasData || state === 'fallback'
+  };
+}
+
 app.get('/health', (_req, res) => {
   res.setHeader('Cache-Control', 'no-store');
   res.json({ ok: true, service: 'lincoln-bell-live' });
@@ -51,13 +77,15 @@ app.get('/health', (_req, res) => {
 
 app.get('/api/bell-schedules', async (_req, res) => {
   const result = await getBellSchedules(false);
+  const status = bellStatus();
   res.json({
     data: result.schedules,
     meta: {
+      state: bellSourceMode(result),
       sourceAvailable: result.sourceAvailable,
       stale: result.stale,
       fallback: result.fallback,
-      fetchedAt: result.schedules[0]?.fetchedAt
+      fetchedAt: status.fetchedAt
     }
   });
 });
@@ -65,12 +93,12 @@ app.get('/api/bell-schedules', async (_req, res) => {
 app.get('/api/events', async (req, res) => {
   const defaultStart = DateTime.now().setZone(config.timezone).startOf('month');
   const parsedStart = parseDateOnly(req.query.start, defaultStart);
-  const parsedEnd = parseDateOnly(req.query.end, parsedStart.isValid ? parsedStart.endOf('month') : defaultStart.endOf('month'));
+  const parsedEnd = parseDateOnly(req.query.end, parsedStart.isValid ? parsedStart.plus({ months: 1 }).startOf('month') : defaultStart.plus({ months: 1 }).startOf('month'));
   const spanDays = parsedStart.isValid && parsedEnd.isValid
-    ? Math.floor(parsedEnd.startOf('day').diff(parsedStart.startOf('day'), 'days').days) + 1
+    ? Math.floor(parsedEnd.startOf('day').diff(parsedStart.startOf('day'), 'days').days)
     : Number.POSITIVE_INFINITY;
-  if (!parsedStart.isValid || !parsedEnd.isValid || parsedEnd.toMillis() < parsedStart.toMillis() || spanDays > 370) {
-    return res.status(400).json({ error: 'Invalid date range; use YYYY-MM-DD and a maximum span of 370 calendar days.' });
+  if (!parsedStart.isValid || !parsedEnd.isValid || parsedEnd.toMillis() <= parsedStart.toMillis() || spanDays > 370) {
+    return res.status(400).json({ error: 'Invalid date range; use YYYY-MM-DD with an exclusive end date after start and a maximum span of 370 days.' });
   }
 
   const result = await getEvents(false);
@@ -78,7 +106,7 @@ app.get('/api/events', async (req, res) => {
     return res.status(503).json({ error: 'Lincoln calendar source is unavailable and no server-cached calendar data is available.' });
   }
   const rangeStart = parsedStart.startOf('day');
-  const rangeEnd = parsedEnd.startOf('day').plus({ days: 1 });
+  const rangeEnd = parsedEnd.startOf('day');
   const matchingEvents = result.events.filter(event => {
     const start = DateTime.fromISO(event.start, { zone: config.timezone });
     if (!start.isValid) return false;
@@ -94,6 +122,7 @@ app.get('/api/events', async (req, res) => {
     meta: {
       sourceAvailable: result.sourceAvailable,
       stale: result.stale,
+      state: calendarSourceMode(result),
       parserMode: result.parserMode,
       fetchedAt: calendarStatus().fetchedAt,
       truncated: matchingEvents.length > events.length,
@@ -108,10 +137,8 @@ app.get('/api/today', async (req, res) => {
   if (!date.isValid) return res.status(400).json({ error: 'Invalid date; use YYYY-MM-DD.' });
 
   const [bells, calendar] = await Promise.all([getBellSchedules(false), getEvents(false)]);
-  const calendarState = calendar.sourceAvailable
-    ? (calendar.stale ? 'cached-live' : 'live')
-    : (calendar.events.length ? 'cached-live' : 'unavailable');
-  const bellState = bells.fallback ? 'seed-fallback' : bells.stale ? 'cached-live' : 'live';
+  const calendarState = calendarSourceMode(calendar);
+  const bellState = bellSourceMode(bells);
 
   const resolutionTime = date.toISODate() === now.toISODate() ? now : date.startOf('day');
   const result = resolveSchoolDay(resolutionTime, calendar.events, bells.schedules, { bell: bellState, calendar: calendarState });
@@ -141,6 +168,9 @@ app.get('/api/today', async (req, res) => {
     .sort();
   // Report the older successful source timestamp so the combined freshness label never overstates recency.
   result.sourceUpdatedAt = successfulSourceTimes.at(0);
+  if (calendarState !== 'unavailable') {
+    result.nextSchoolDay = resolveNextSchoolDay(resolutionTime, calendar.events, bells.schedules, { bell: bellState, calendar: calendarState });
+  }
 
   res.json({ data: result });
 });
@@ -155,21 +185,27 @@ app.post('/api/refresh', rateLimit({ windowMs: 60_000, limit: 4, standardHeaders
   const [bells, calendar] = await Promise.all([getBellSchedules(true), getEvents(true)]);
   res.json({
     ok: true,
-    bell: { sourceAvailable: bells.sourceAvailable, stale: bells.stale },
-    calendar: { sourceAvailable: calendar.sourceAvailable, stale: calendar.stale }
+    bell: { state: bellSourceMode(bells), sourceAvailable: bells.sourceAvailable, stale: bells.stale, fallback: bells.fallback },
+    calendar: { state: calendarSourceMode(calendar), sourceAvailable: calendar.sourceAvailable, stale: calendar.stale }
   });
 });
 
-app.get('/api/status', (_req, res) => res.json({
-  ok: true,
-  service: 'lincoln-bell-live',
-  version: process.env.npm_package_version || '1.0.0',
-  timezone: config.timezone,
-  uptimeSeconds: Math.floor(process.uptime()),
-  bell: { ...bellStatus(), parserMode: 'html' },
-  calendar: calendarStatus(),
-  now: new Date().toISOString()
-}));
+app.get('/api/status', (_req, res) => {
+  const bell = bellStatus();
+  const calendar = calendarStatus();
+  const bellState: Exclude<SourceMode, 'browser-cache'> = bell.hasData ? (bell.stale ? 'cached' : 'live') : 'fallback';
+  const calendarState: Exclude<SourceMode, 'browser-cache'> = calendar.hasData ? (calendar.stale ? 'cached' : 'live') : 'unavailable';
+  res.json({
+    ok: true,
+    service: 'lincoln-bell-live',
+    version: process.env.npm_package_version || '1.0.0',
+    timezone: config.timezone,
+    uptimeSeconds: Math.floor(process.uptime()),
+    bell: diagnostics(bellState, 'Official HTML', config.bellPageUrl, bell),
+    calendar: diagnostics(calendarState, calendar.parserMode === 'ics' ? 'Official ICS' : calendar.parserMode === 'html' ? 'Official HTML' : 'Not loaded', config.eventsPageUrl, calendar),
+    now: new Date().toISOString()
+  });
+});
 
 app.use('/api', (_req, res) => res.status(404).json({ error: 'API route not found.' }));
 

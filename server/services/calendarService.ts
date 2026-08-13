@@ -1,4 +1,4 @@
-import type { SchoolEvent } from '../../src/types/index.js';
+import type { SchoolEvent, SourceMode } from '../../src/types/index.js';
 import { MemoryCache } from '../cache/memoryCache.js';
 import { config } from '../config.js';
 import { parseEventsHtml, parseIcsEvents } from '../parsers/calendarParser.js';
@@ -32,3 +32,8 @@ export async function getEvents(force = false) {
   }
 }
 export function calendarStatus() { return { ...cache.snapshot(), parserMode }; }
+export function calendarSourceMode(result: { events: SchoolEvent[]; sourceAvailable: boolean; stale: boolean }): Exclude<SourceMode, 'browser-cache'> {
+  if (!result.events.length && !result.sourceAvailable) return 'unavailable';
+  if (!result.sourceAvailable || result.stale) return 'cached';
+  return 'live';
+}

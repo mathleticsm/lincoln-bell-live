@@ -19,6 +19,13 @@ export interface LiveState {
   label: string;
 }
 
+export interface SchoolMetrics {
+  completed: number;
+  total: number;
+  secondsUntilLunch?: number;
+  secondsUntilDismissal?: number;
+}
+
 function secondsUntil(end: DateTime, now: DateTime) {
   return Math.max(0, Math.ceil(end.diff(now, 'seconds').seconds));
 }
@@ -90,4 +97,31 @@ export function formatCountdown(sec = 0) {
 export function formatClock(iso: string) {
   const date = DateTime.fromISO(iso, { zone: ZONE });
   return date.isValid ? date.toFormat('h:mm a') : '';
+}
+
+export function formatDuration(seconds: number) {
+  const totalMinutes = Math.max(0, Math.ceil(seconds / 60));
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  if (hours && minutes) return `${hours}h ${minutes}m`;
+  if (hours) return `${hours}h`;
+  return `${minutes}m`;
+}
+
+export function computeSchoolMetrics(now: DateTime, dateISO: string, periods: BellPeriod[]): SchoolMetrics {
+  const boundaries = periods.map(period => ({
+    period,
+    start: parseSchoolTime(dateISO, period.startTime),
+    end: parseSchoolTime(dateISO, period.endTime)
+  })).filter(item => item.start.isValid && item.end.isValid);
+  const completed = boundaries.filter(item => now.toMillis() >= item.end.toMillis()).length;
+  const lunch = boundaries.find(item => item.period.kind === 'lunch' && now.toMillis() < item.start.toMillis());
+  const dismissal = boundaries.at(-1)?.end;
+
+  return {
+    completed,
+    total: boundaries.length,
+    secondsUntilLunch: lunch ? secondsUntil(lunch.start, now) : undefined,
+    secondsUntilDismissal: dismissal && now.toMillis() < dismissal.toMillis() ? secondsUntil(dismissal, now) : undefined
+  };
 }

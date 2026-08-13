@@ -16,7 +16,18 @@ function slug(name: string) {
 function isGenericPageHeading(name: string) {
   const normalized = name.replace(/\s+/g, ' ').trim();
   return /^bell schedules?$/i.test(normalized)
-    || (/lincoln high school/i.test(normalized) && /bell schedules?/i.test(normalized));
+    || (/lincoln high school/i.test(normalized) && /bell schedules?/i.test(normalized))
+    || /^(?:print|printer friendly|description \/ period|start time|end time|length)$/i.test(normalized);
+}
+
+function looksLikeScheduleName(name: string) {
+  const normalized = name.replace(/\s+/g, ' ').trim();
+  return normalized.length >= 4
+    && normalized.length <= 160
+    && !isGenericPageHeading(normalized)
+    && /\b(?:schedule|tuesdays?)\b/i.test(normalized)
+    && !/^print schedules?\b/i.test(normalized)
+    && !/\b(?:share|shares|same)\b/i.test(normalized);
 }
 
 function kind(name: string): BellPeriod['kind'] {
@@ -83,37 +94,40 @@ export function parseBellSchedules(html: string, sourceUrl: string, fetchedAt = 
     });
     if (!periods.length || !isChronological(periods)) return;
 
-    const titleCandidates = $(table).prevAll('h1,h2,h3,h4,h5,strong,b,a').slice(0, 6)
+    const titleCandidates = $(table).find('caption').slice(0, 1)
       .map((__, element) => $(element).text().replace(/\s+/g, ' ').trim()).get();
-    let name = titleCandidates.find(title => /schedule|tuesday/i.test(title) && !isGenericPageHeading(title));
+    titleCandidates.push(...$(table).prevAll('h1,h2,h3,h4,h5,strong,b,a,p').slice(0, 8)
+      .map((__, element) => $(element).text().replace(/\s+/g, ' ').trim()).get());
+    const singleTableContainer = $(table).parents().filter((__, element) => $(element).find('table').length === 1).first();
+    if (singleTableContainer.length) {
+      titleCandidates.push(...singleTableContainer.find('h1,h2,h3,h4,h5,strong,b,a,p')
+        .filter((__, element) => $(element).closest('table').length === 0)
+        .slice(0, 12)
+        .map((__, element) => $(element).text().replace(/\s+/g, ' ').trim()).get());
+    }
+    let name = titleCandidates.find(looksLikeScheduleName);
     if (!name) {
       const parentText = $(table).parent().text().replace(/\s+/g, ' ').trim();
-      name = parentText.match(/(Regular Bell Schedule \([^)]*\)|Minimum Day Schedule|Professional Development Tuesdays?)/i)?.[1];
+      name = parentText.match(/([^.!?]{0,100}\b(?:Bell Schedule(?:\s*\([^)]*\))?|Day Schedule|Development Tuesdays?|Assembly Schedule|Testing Schedule)\b)/i)?.[1]?.trim();
     }
-    if (!name || isGenericPageHeading(name)) return;
+    if (!name || !looksLikeScheduleName(name)) return;
 
+    const officialDescription = $(table).find('.bell-schedule-description').first().text().replace(/\s+/g, ' ').trim();
     const previous = $(table).prev();
     const previousText = previous.text().replace(/\s+/g, ' ').trim();
-    const description = previous.length && previousText && !/schedule/i.test(previousText) ? previousText : undefined;
+    const description = officialDescription || (previous.length && previousText && !/schedule/i.test(previousText) ? previousText : undefined);
     schedules.push({ id: slug(name), name, description, periods, sourceUrl, fetchedAt, dataMode: 'live' });
   });
 
   {
-    // Text fallback supplements any known schedule family missed by table parsing.
-    const text = $.root().text().replace(/\s+/g, ' ');
-    const names = [
-      'Regular Bell Schedule (Monday/Wednesday)',
-      'Regular Bell Schedule (Thursday/Friday)',
-      'Minimum Day Schedule',
-      'Professional Development Tuesdays'
-    ];
-    for (let index = 0; index < names.length; index += 1) {
-      if (schedules.some(schedule => schedule.id === slug(names[index]))) continue;
-      const startAt = text.toLowerCase().indexOf(names[index].toLowerCase());
-      if (startAt < 0) continue;
-      const nextName = names[index + 1];
-      const endAt = nextName ? text.toLowerCase().indexOf(nextName.toLowerCase(), startAt + 1) : text.length;
-      const chunk = text.slice(startAt, endAt > startAt ? endAt : text.length);
+    // A heading-based text fallback remains dynamic if harmless markup changes
+    // remove the tables while preserving schedule headings and row text.
+    const headings = $('h1,h2,h3,h4,h5').filter((__, element) => looksLikeScheduleName($(element).text()));
+    headings.each((__, element) => {
+      const name = $(element).text().replace(/\s+/g, ' ').trim();
+      if (schedules.some(schedule => schedule.id === slug(name))) return;
+      const chunk = [$(element).text(), ...$(element).nextUntil('h1,h2,h3,h4,h5').map((___, sibling) => $(sibling).text()).get()]
+        .join(' ').replace(/\s+/g, ' ');
       const pattern = /(Period\s+[1-8]\/[1-8](?:\s*\(BIC\))?|Lunch|Advisory|Nutrition)\s+(\d{1,2}:\d{2}\s*[AP]M)\s+(\d{1,2}:\d{2}\s*[AP]M)/gi;
       const periods: BellPeriod[] = [];
       let match: RegExpExecArray | null;
@@ -129,14 +143,14 @@ export function parseBellSchedules(html: string, sourceUrl: string, fetchedAt = 
           kind: kind(match[1])
         });
       }
-      if (periods.length && isChronological(periods)) schedules.push({ id: slug(names[index]), name: names[index], periods, sourceUrl, fetchedAt, dataMode: 'live' });
-    }
+      if (periods.length && isChronological(periods)) schedules.push({ id: slug(name), name, periods, sourceUrl, fetchedAt, dataMode: 'live' });
+    });
   }
 
-  const unique = new Map(
-    schedules
-      .filter(schedule => !isGenericPageHeading(schedule.name))
-      .map(schedule => [schedule.id, schedule])
-  );
+  const unique = new Map<string, BellSchedule>();
+  for (const schedule of schedules) {
+    if (!looksLikeScheduleName(schedule.name) || !schedule.id || !schedule.periods.length || !isChronological(schedule.periods)) continue;
+    if (!unique.has(schedule.id)) unique.set(schedule.id, schedule);
+  }
   return [...unique.values()];
 }
